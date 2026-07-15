@@ -3,6 +3,7 @@ package com.suming.tools.flower_grass_bomb.entity;
 import com.mojang.logging.LogUtils;
 import com.suming.tools.flower_grass_bomb.init.FlowerGrassBombModule;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
@@ -20,6 +21,7 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -86,7 +88,7 @@ public class FlowerGrassBombEntity extends ThrowableProjectile implements ItemSu
         //落地音效
         level.playSound(null, hitPos, SoundEvents.AMETHYST_BLOCK_CHIME  , SoundSource.NEUTRAL, 1.0F, 1.0F);
 
-        //种植
+        //种植0
         plantFlowersAround(level, hitPos);
 
         //销毁实体
@@ -105,39 +107,96 @@ public class FlowerGrassBombEntity extends ThrowableProjectile implements ItemSu
         int radius = 5;
         int verticalRange = 2;
 
-        //遍历范围内所有方块
+        //区分世界维度
+        ResourceKey<Level> dimensionKey = level.dimension();
+        if (dimensionKey == Level.OVERWORLD){
+            List<BlockPos> plantablePositions = getPlantablePositions(level, hitPos, radius, verticalRange);
+
+            plantablePositions.stream()
+                    .filter(pos -> random.nextFloat() < 0.5f)
+                    .forEach(pos -> {
+                        if (plantFlower(level, pos, pos.below(), random)) {
+                            LOGGER.info("在 ({}, {}, {}) 种植了主世界花草", pos.getX(), pos.getY(), pos.getZ());
+                        }
+                    });
+
+
+        }else if(dimensionKey == Level.NETHER){
+            List<BlockPos> plantablePositionsNether = getPlantablePositionsNether(level, hitPos, radius, verticalRange);
+
+            for (BlockPos pos : plantablePositionsNether) {
+                if (random.nextFloat() < 0.5f) {
+                    if (plantFlowerNether(level, pos, pos.below(), random)) {
+                        LOGGER.info("在 ({}, {}, {}) 种植了下界花草", pos.getX(), pos.getY(), pos.getZ());
+                    }
+                }
+            }
+
+
+
+        }else if(dimensionKey == Level.END){
+
+        }else{
+
+        }
+
+
+    }
+
+    //收集主世界可用种植位置
+    private List<BlockPos> getPlantablePositions(Level level, BlockPos hitPos, int radius, int verticalRange) {
+        List<BlockPos> positions = new ArrayList<>();
+
         for (int x = hitPos.getX() - radius; x <= hitPos.getX() + radius; x++) {
             for (int y = hitPos.getY() - verticalRange; y <= hitPos.getY() + verticalRange; y++) {
                 for (int z = hitPos.getZ() - radius; z <= hitPos.getZ() + radius; z++) {
                     BlockPos targetPos = new BlockPos(x, y, z);
                     BlockState state = level.getBlockState(targetPos);
 
-                    //检查目标位置是否是泥土
+                    // 检查目标位置是否是泥土
                     if (isDirtBlock(state)) {
-                        //检查上方是否为空
+                        // 检查上方是否为空
                         BlockPos abovePos = targetPos.above();
                         if (level.isEmptyBlock(abovePos)) {
-                            //50% 概率种植，50% 概率不种植
-                            if (random.nextFloat() < 0.5f) {
-                                //尝试种植植物
-                                if (plantFlower(level, abovePos, targetPos, random)) {
-                                    LOGGER.info("在 ({}, {}, {}) 种植了花草", x, y, z);
-                                }
-                            }
+                            positions.add(abovePos); // 存储可种植位置
                         }
                     }
                 }
             }
         }
 
-        //遍历操作有现成方法(1.18+)
-        /*
+        return positions;
+    }
+    //收集下界可用种植位置
+    private List<BlockPos> getPlantablePositionsNether(Level level, BlockPos hitPos, int radius, int verticalRange) {
+        List<BlockPos> positions = new ArrayList<>();
+
+        for (int x = hitPos.getX() - radius; x <= hitPos.getX() + radius; x++) {
+            for (int y = hitPos.getY() - verticalRange; y <= hitPos.getY() + verticalRange; y++) {
+                for (int z = hitPos.getZ() - radius; z <= hitPos.getZ() + radius; z++) {
+                    BlockPos targetPos = new BlockPos(x, y, z);
+                    BlockState state = level.getBlockState(targetPos);
+                    if (isDirtBlockNether(state)) {
+                        //检查上方是否为空
+                        BlockPos abovePos = targetPos.above();
+                        if (level.isEmptyBlock(abovePos)) {
+                            positions.add(abovePos);
+                        }
+                    }
+                }
+            }
+        }
+
+        return positions;
+    }
+
+    //快捷遍历操作方法(1.18+)
+    private void traverseBlocks(BlockPos hitPos, int radius, int verticalRange){
         BlockPos.betweenClosedStream(
                 hitPos.offset(-radius, -verticalRange, -radius),
                 hitPos.offset(radius, verticalRange, radius)
         ).forEach(pos -> {    });
 
-         */
     }
 
     //检查落点是否为泥土
@@ -145,6 +204,12 @@ public class FlowerGrassBombEntity extends ThrowableProjectile implements ItemSu
         Block block = state.getBlock();
         //允许种植的泥土方块
         return block == Blocks.DIRT || block == Blocks.GRASS_BLOCK;
+    }
+    //检查落点是否为下界土壤
+    private boolean isDirtBlockNether(BlockState state) {
+        Block block = state.getBlock();
+        //允许种植的下界泥土方块
+        return block == Blocks.CRIMSON_NYLIUM || block == Blocks.WARPED_NYLIUM;
     }
 
 
@@ -209,6 +274,26 @@ public class FlowerGrassBombEntity extends ThrowableProjectile implements ItemSu
             Blocks.RED_MUSHROOM,            //红蘑菇 1
             Blocks.BROWN_MUSHROOM            //棕色蘑菇 1
     );
+    private boolean plantFlowerNether(Level level, BlockPos plantPos, BlockPos soilPos, RandomSource random) {
+        //随机选择一种花
+        Block flowerBlock;
+        //60%概率种植
+        if (random.nextFloat() < 0.6f){
+            flowerBlock = netherFlowers.get(random.nextInt(netherFlowers.size()));
+            BlockState flowerState = flowerBlock.defaultBlockState();
+
+            //检查是否能种植
+            if (flowerState.canSurvive(level, plantPos)) {
+                //放置植物
+                level.setBlock(plantPos, flowerState, 3);
+
+                return true;
+            }
+
+        }
+
+        return false;
+    }
 
 
 
